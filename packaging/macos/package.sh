@@ -135,13 +135,21 @@ ln -s /Applications "$STAGE/Applications"
 mkdir -p "$STAGE/.background"
 cp "$HERE/dmg/background.tiff" "$STAGE/.background/background.tiff"
 cp "$HERE/dmg/dmg-layout.DS_Store" "$STAGE/.DS_Store"
-rm -f "$DMG" "$WORK/raw.dmg"
-# makehybrid + convert builds the image without attaching a device, unlike `create -srcfolder`,
-# which is flaky on CI runners ("Resource busy") and hangs in sandboxed sessions.
-# The volume name has no version: .DS_Store finds the background through an alias that includes it.
-hdiutil makehybrid -hfs -hfs-volume-name "FilmCraft" -hfs-openfolder "$STAGE" -o "$WORK/raw.dmg" "$STAGE"
-hdiutil convert "$WORK/raw.dmg" -format UDZO -imagekey zlib-level=9 -o "$DMG"
-rm -f "$WORK/raw.dmg"
+rm -f "$DMG"
+# makehybrid adds FinderInfo to files inside the signed app and invalidates its
+# Developer ID signature. create -srcfolder preserves the app and Finder layout.
+created=0
+for attempt in 1 2 3 4 5; do
+  if hdiutil create -srcfolder "$STAGE" -volname "FilmCraft" -fs HFS+ \
+      -format UDZO -imagekey zlib-level=9 -ov -o "$DMG"; then
+    created=1
+    break
+  fi
+  rm -f "$DMG"
+  [[ "$attempt" = 5 ]] && break
+  sleep $((attempt * 5))
+done
+[[ "$created" = 1 ]] || { echo "DMG creation failed" >&2; exit 1; }
 sign "$DMG"
 codesign --verify --strict --verbose=2 "$DMG"
 if [[ "$NOTARIZE" = 1 ]]; then
